@@ -44,6 +44,7 @@ public class HelloApplication extends Application {
     private TextField minLyingStart, secLyingStart;
     private TextField minChange, secChange;
     private TextField minStandingStart, secStandingStart;
+    private TextField minEnd, secEnd; // Новая пара: конец анализируемой пробы
 
     // Текстовые метки результатов на экране
     private Label startRrResultLabel;
@@ -95,6 +96,8 @@ public class HelloApplication extends Application {
         props.setProperty("changeSec", secChange.getText().trim());
         props.setProperty("standingMin", minStandingStart.getText().trim());
         props.setProperty("standingSec", secStandingStart.getText().trim());
+        props.setProperty("endMin", minEnd.getText().trim());
+        props.setProperty("endSec", secEnd.getText().trim());
 
         try (FileOutputStream out = new FileOutputStream(CONFIG_FILE)) {
             props.store(out, "Файл настроек ортостатической пробы");
@@ -137,6 +140,8 @@ public class HelloApplication extends Application {
             props.setProperty("changeSec", "0");
             props.setProperty("standingMin", "4");
             props.setProperty("standingSec", "40");
+            props.setProperty("endMin", "6");
+            props.setProperty("endSec", "00");
         }
 
         // --- 2. Секция настройки временных диапазонов ---
@@ -171,6 +176,15 @@ public class HelloApplication extends Application {
         timeGrid.add(new Label("Стабилизация ЧСС стоя (начало):"), 0, 2);
         timeGrid.add(minStandingStart, 1, 2); timeGrid.add(new Label("м."), 2, 2);
         timeGrid.add(secStandingStart, 3, 2); timeGrid.add(new Label("с."), 4, 2);
+
+        // В сетке timeGrid добавьте 4-ю строку (индекс 3):
+        minEnd = new TextField(props.getProperty("endMin"));
+        minEnd.setPrefWidth(40);
+        secEnd = new TextField(props.getProperty("endSec"));
+        secEnd.setPrefWidth(40);
+        timeGrid.add(new Label("Конец анализируемой пробы:"), 0, 3);
+        timeGrid.add(minEnd, 1, 3); timeGrid.add(new Label("м."), 2, 3);
+        timeGrid.add(secEnd, 3, 3); timeGrid.add(new Label("с."), 4, 3);
 
         // --- 3. Кнопка расчета ---
         Button calculateButton = new Button("Рассчитать показатели");
@@ -208,7 +222,7 @@ public class HelloApplication extends Application {
         );
 
         // Немного увеличим высоту окна до 570, чтобы все строки поместились свободно
-        Scene scene = new Scene(mainLayout, 540, 570);
+        Scene scene = new Scene(mainLayout, 540, 610);
         primaryStage.setScene(scene);
         primaryStage.setResizable(false);
         primaryStage.show();
@@ -281,31 +295,33 @@ public class HelloApplication extends Application {
             long tLyingStart = (Integer.parseInt(minLyingStart.getText().trim()) * 60L + Integer.parseInt(secLyingStart.getText().trim())) * 1000L;
             long tChange = (Integer.parseInt(minChange.getText().trim()) * 60L + Integer.parseInt(secChange.getText().trim())) * 1000L;
             long tStandingStart = (Integer.parseInt(minStandingStart.getText().trim()) * 60L + Integer.parseInt(secStandingStart.getText().trim())) * 1000L;
-            long tEnd = totalFileDurationMs;
+            long tEnd = (Integer.parseInt(minEnd.getText().trim()) * 60L + Integer.parseInt(secEnd.getText().trim())) * 1000L;
 
+            // Проверка хронологии (теперь проверяем и against totalFileDurationMs)
             if (tLyingStart >= tChange || tChange >= tStandingStart || tStandingStart >= tEnd) {
-                showError("Ошибка хронологии", "Нарушена последовательность этапов! Проверьте, чтобы:\nЛёжа < Подъём < Стоя < Конец записи.");
+                showError("Ошибка хронологии", "Нарушена последовательность этапов! Проверьте:\nЛёжа < Подъём < Стоя < Конец пробы.");
+                return;
+            }
+            if (tEnd > totalFileDurationMs) {
+                showError("Ошибка времени", "Указанный конец пробы превышает общую длину загруженного файла.");
                 return;
             }
 
             // Маппинг временных меток на индексы массива RR
-            int idxLyingStart = -1, idxChange = -1, idxStandingStart = -1;
+            int idxLyingStart = -1, idxChange = -1, idxStandingStart = -1, idxEnd = -1;
             long currentSumMs = 0;
 
             for (int i = 0; i < rrIntervals.size(); i++) {
                 currentSumMs += rrIntervals.get(i);
                 if (idxLyingStart == -1 && currentSumMs >= tLyingStart) idxLyingStart = i;
                 if (idxChange == -1 && currentSumMs >= tChange) idxChange = i;
-                if (idxStandingStart == -1 && currentSumMs >= tStandingStart) {
-                    idxStandingStart = i;
+                if (idxStandingStart == -1 && currentSumMs >= tStandingStart) idxStandingStart = i;
+                if (idxEnd == -1 && currentSumMs >= tEnd) {
+                    idxEnd = i;
                     break;
                 }
             }
-
-            if (idxChange == -1 || idxChange >= rrIntervals.size() - REQUIRED_POST_CHANGE_BEATS) {
-                showError("Недостаточно данных", "В файле мало данных после момента подъема для расчета коэффициента 30:15.");
-                return;
-            }
+            if (idxEnd == -1) idxEnd = rrIntervals.size();
 
             // --- 0. ЗНАЧЕНИЕ В МОМЕНТ НАЧАЛА ПОДЪЕМА ---
             double startRrValue = rrIntervals.get(idxChange);
@@ -346,7 +362,7 @@ public class HelloApplication extends Application {
             }
             double avgLyingHr = hrLyingPeriod.isEmpty() ? 0.0 : (sumLying / hrLyingPeriod.size());
             // Средняя ЧСС СТОЯ
-            List hrStandingPeriod = hrValues.subList(idxStandingStart, hrValues.size());
+            List hrStandingPeriod = hrValues.subList(idxStandingStart, idxEnd);
             double sumStanding = 0;
             for (int i = 0; i < hrStandingPeriod.size(); i++) {
                 sumStanding += (Double) hrStandingPeriod.get(i);
@@ -359,7 +375,7 @@ public class HelloApplication extends Application {
             double sumSquaredDiffs = 0.0;
             int diffCount = 0;
 
-            for (int i = idxStandingStart; i < rrIntervals.size() - 1; i++) {
+            for (int i = idxStandingStart; i < idxEnd - 1; i++) {
                 double diff = rrIntervals.get(i + 1) - rrIntervals.get(i);
                 sumSquaredDiffs += diff * diff;
                 diffCount++;
