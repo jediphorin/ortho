@@ -51,6 +51,7 @@ public class HelloApplication extends Application {
     private Label maxRr30ResultLabel;   // Добавлено: maxRR30
     private Label orthoResultLabel;
     private Label ratioResultLabel;
+    private Label rmssdStandingResultLabel; // Новая метка для RMSSD
 
     private List<Double> rrIntervals = new ArrayList<>();
     private long totalFileDurationMs = 0;
@@ -192,18 +193,22 @@ public class HelloApplication extends Application {
         ratioResultLabel = new Label("Коэффициент 30:15: --");
         ratioResultLabel.setStyle("-fx-font-size: 14px; -fx-font-weight: bold; -fx-text-fill: #d35400;");
 
+        rmssdStandingResultLabel = new Label("RMSSD стоя: --");
+        rmssdStandingResultLabel.setStyle("-fx-font-size: 14px; -fx-font-weight: bold; -fx-text-fill: #8e44ad;");
+
         // --- Компоновка интерфейса ---
-        VBox mainLayout = new VBox(12); // Немного уплотнили для вместимости новых строк
+        VBox mainLayout = new VBox(12);
         mainLayout.setPadding(new Insets(20));
         mainLayout.setAlignment(Pos.CENTER);
         mainLayout.getChildren().addAll(
                 headerLabel, openButton, fileStatusLabel,
                 new Separator(), timeGrid, calculateButton,
                 new Separator(), startRrResultLabel, minRr15ResultLabel, maxRr30ResultLabel,
-                new Separator(), orthoResultLabel, ratioResultLabel
+                new Separator(), orthoResultLabel, ratioResultLabel, rmssdStandingResultLabel
         );
 
-        Scene scene = new Scene(mainLayout, 540, 540);
+        // Немного увеличим высоту окна до 570, чтобы все строки поместились свободно
+        Scene scene = new Scene(mainLayout, 540, 570);
         primaryStage.setScene(scene);
         primaryStage.setResizable(false);
         primaryStage.show();
@@ -252,6 +257,17 @@ public class HelloApplication extends Application {
         } catch (Exception ex) {
             showError("Ошибка чтения файла", ex.getMessage());
         }
+    }
+
+    // --- ОТДЕЛЬНЫЙ МЕТОД ДЛЯ ВЫВОДА ВСЕХ ПАРАМЕТРОВ ---
+    private void updateResultsDisplay(double startRr, double minRr15, double maxRr30,
+                                      double orthoDiff, double ratio3015, double rmssdStanding) {
+        startRrResultLabel.setText(String.format("RR в момент начала подъема: %.0f мс", startRr));
+        minRr15ResultLabel.setText(String.format("minRR15 (в районе 15-го удара): %.0f мс", minRr15));
+        maxRr30ResultLabel.setText(String.format("maxRR30 (в районе 30-го удара): %.0f мс", maxRr30));
+        orthoResultLabel.setText(String.format("Ортостатическая разница: %.1f уд/мин", orthoDiff));
+        ratioResultLabel.setText(String.format("Коэффициент 30:15: %.2f", ratio3015));
+        rmssdStandingResultLabel.setText(String.format("RMSSD стоя: %.1f мс", rmssdStanding));
     }
 
     private void processAnalysis() {
@@ -337,12 +353,23 @@ public class HelloApplication extends Application {
             }
             double avgStandingHr = hrStandingPeriod.isEmpty() ? 0.0 : (sumStanding / hrStandingPeriod.size());
             double orthoDifference = avgStandingHr - avgLyingHr;
-            // --- Вывод всех результатов на главный экран ---
-            startRrResultLabel.setText(String.format("RR в момент начала подъема: %.0f мс", startRrValue));
-            minRr15ResultLabel.setText(String.format("minRR15 (в районе 15-го удара): %.0f мс", minRR15));
-            maxRr30ResultLabel.setText(String.format("maxRR30 (в районе 30-го удара): %.0f мс", maxRR30));
-            orthoResultLabel.setText(String.format("Ортостатическая разница = %.1f уд/мин", orthoDifference));
-            ratioResultLabel.setText(String.format("Коэффициент 30:15 = %.3f", ratio3015));
+            // ==========================================
+            // 3. РАСЧЕТ RMSSD СТОЯ (от idxStandingStart до конца файла)
+            // ==========================================
+            double sumSquaredDiffs = 0.0;
+            int diffCount = 0;
+
+            for (int i = idxStandingStart; i < rrIntervals.size() - 1; i++) {
+                double diff = rrIntervals.get(i + 1) - rrIntervals.get(i);
+                sumSquaredDiffs += diff * diff;
+                diffCount++;
+            }
+
+            double rmssdStanding = (diffCount > 0) ? Math.sqrt(sumSquaredDiffs / diffCount) : 0.0;
+
+            // --- Вызов отдельного метода для вывода всех результатов ---
+            updateResultsDisplay(startRrValue, minRR15, maxRR30, orthoDifference, ratio3015, rmssdStanding);
+
         } catch (NumberFormatException e) {
             showError("Неверный формат", "Поля времени должны содержать только целые числа.");
         } catch (Exception ex) {
